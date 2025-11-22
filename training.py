@@ -12,9 +12,10 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-from sklearn.metrics import precision_recall_fscore_support, roc_auc_score, confusion_matrix
+from sklearn.metrics import precision_recall_fscore_support, roc_auc_score, confusion_matrix, fbeta_score
 
-CSV_PATH = "./cleaned_sample_parsed_cadets_tagged_chunked.csv"
+# CSV_PATH = "./cleaned_sample_parsed_cadets_tagged_chunked.csv"
+CSV_PATH = "./small_cleaned_sample_parsed_cadets_tagged.csv"
 MAX_LEN = 256
 BATCH_SIZE = 256
 D_MODEL = 128
@@ -22,7 +23,6 @@ NHEAD = 4
 NUM_LAYERS = 4
 FFN_DIM = 256
 DROPOUT = 0.2
-
 LR = 5e-4
 EPOCHS = 15
 SEED = 5231
@@ -151,6 +151,8 @@ def evaluate_metrics(model, data_loader, loss_fn, threshold=0.5):
     avg_loss = total_loss / max(1, len(y_true))
     acc = (y_pred == y_true).mean() if len(y_true) > 0 else 0.0
     precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary", zero_division=0)
+    # F2 score weights recall 2x more than precision
+    f2 = fbeta_score(y_true, y_pred, beta=2.0, average="binary", zero_division=0)
     try:
         auc = roc_auc_score(y_true, y_prob)
     except Exception:
@@ -169,6 +171,7 @@ def evaluate_metrics(model, data_loader, loss_fn, threshold=0.5):
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
+        "f2": float(f2),
         "auc": float(auc),
         "missed_attacks": int(fn),
         "false_alarms": int(fp)
@@ -192,17 +195,17 @@ def collect_probs(model, data_loader):
 
     return np.array(y_true), np.array(y_prob)
 
-def find_best_threshold(model, valid_loader, target="recall"):
+def find_best_threshold(model, valid_loader, target="f2"):
     y_true, y_prob = collect_probs(model, valid_loader)
     best_thr, best_score = 0.5, -1.0
-
 
     for thr in np.linspace(0.0, 1.0, 100):
         y_pred = (y_prob > thr).astype(int)
         precision, recall, f1, _ = precision_recall_fscore_support(
             y_true, y_pred, average="binary", zero_division=0
         )
-        score = {"precision": precision, "recall": recall, "f1": f1}[target]
+        f2 = fbeta_score(y_true, y_pred, beta=2.0, average="binary", zero_division=0)
+        score = {"precision": precision, "recall": recall, "f1": f1, "f2": f2}[target]
         if score > best_score:
             best_score, best_thr = score, thr
 
@@ -389,8 +392,8 @@ def main():
     num_pos = float(train_counts.get(1, 0))
     num_neg = float(train_counts.get(0, 0))
 
-    # Multiply by 2.0 to penalize missed attacks more heavily and improve recall
-    POS_WEIGHT = (num_neg / max(1.0, num_pos)) * 1.5
+    # Multiply by 1.8 to penalize missed attacks more while avoiding predicting all as attack
+    POS_WEIGHT = (num_neg / max(1.0, num_pos)) * 1.8
 
     train_dataset = SeqDataset(train_df, token2id, MAX_LEN)
     valid_dataset = SeqDataset(valid_df, token2id, MAX_LEN)
@@ -434,8 +437,8 @@ def main():
 
     pos_weight_tensor = torch.tensor([POS_WEIGHT]).to(device)
     loss_fn = FocalBCELoss(
-        alpha=None,
-        gamma=1.5,
+        alpha=0.65,  # Moderate weighting for positive class to avoid predicting all as attack
+        gamma=2.0,   # Focus more on hard examples
         pos_weight=pos_weight_tensor,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
@@ -454,7 +457,7 @@ def main():
     )
 
 
-    best_val_f1 = 0.0
+    best_val_f2 = 0.0
     patience = 5
     patience_counter = 0
 
@@ -503,21 +506,26 @@ def main():
         # Calculate metrics for validation set
         val_metrics = evaluate_metrics(model, valid_loader, loss_fn)
         val_loss = val_metrics["loss"]
+        val_precision = val_metrics["precision"]
+        val_recall = val_metrics["recall"]
         val_f1 = val_metrics["f1"]
+        val_f2 = val_metrics["f2"]
         val_missed = val_metrics["missed_attacks"]
+        val_false_alarms = val_metrics["false_alarms"]
         
         epoch_time = time.time() - epoch_start
-        print(f"\n Epoch {epoch} Summary: TrainLoss={train_loss:.4f}, ValLoss={val_loss:.4f}, ValF1={val_f1:.4f}")
-        print(f" -> Missed Attacks: {val_missed}")
+        print(f"\n Epoch {epoch} Summary: TrainLoss={train_loss:.4f}, ValLoss={val_loss:.4f}")
+        print(f" -> Precision={val_precision:.4f}, Recall={val_recall:.4f}, F1={val_f1:.4f}, F2={val_f2:.4f}")
+        print(f" -> Missed Attacks: {val_missed}, False Alarms: {val_false_alarms}")
 
-        if val_f1 > best_val_f1:
-            best_val_f1 = val_f1
+        if val_f2 > best_val_f2:
+            best_val_f2 = val_f2
             patience_counter = 0
             torch.save(model.state_dict(), "best_transformer_model.pt")
-            print(f" -> Saved best model (F1: {best_val_f1:.4f})")
-        elif val_f1 < best_val_f1:
+            print(f" -> Saved best model (F2: {best_val_f2:.4f}, Recall: {val_recall:.4f}, Precision: {val_precision:.4f})")
+        elif val_f2 <= best_val_f2:
             patience_counter += 1
-            print(f" -> Patience {patience_counter}/{patience} (Val F1 < Best Val F1)")
+            print(f" -> Patience {patience_counter}/{patience} (Val F2 <= Best Val F2)")
             if patience_counter >= patience:
                 print("Early stopping triggered")
                 break
@@ -541,13 +549,13 @@ def main():
     ).to(device)
 
     lstm_loss_fn = FocalBCELoss(
-        alpha=None,         
-        gamma=1.5,
+        alpha=0.65,  # Moderate weighting for positive class to avoid predicting all as attack
+        gamma=2.0,   # Focus more on hard examples
         pos_weight=pos_weight_tensor,
     )
     lstm_optimizer = torch.optim.Adam(lstm_model.parameters(), lr=LR)
 
-    best_lstm_val_f1 = 0.0
+    best_lstm_val_f2 = 0.0
     lstm_patience_counter = 0
 
     for epoch in range(1, EPOCHS + 1):
@@ -585,20 +593,25 @@ def main():
         train_acc = total_correct / max(1, total_samples)
         val_metrics = evaluate_metrics(lstm_model, valid_loader, lstm_loss_fn)
         val_loss = val_metrics["loss"]
+        val_precision = val_metrics["precision"]
+        val_recall = val_metrics["recall"]
         val_f1 = val_metrics["f1"]
+        val_f2 = val_metrics["f2"]
         val_missed = val_metrics["missed_attacks"]
+        val_false_alarms = val_metrics["false_alarms"]
 
-        print(f" LSTM Epoch {epoch} Summary: TrainLoss={train_loss:.4f}, ValLoss={val_loss:.4f}, ValF1={val_f1:.4f}")
-        print(f" -> Missed Attacks: {val_missed}")
+        print(f" LSTM Epoch {epoch} Summary: TrainLoss={train_loss:.4f}, ValLoss={val_loss:.4f}")
+        print(f" -> Precision={val_precision:.4f}, Recall={val_recall:.4f}, F1={val_f1:.4f}, F2={val_f2:.4f}")
+        print(f" -> Missed Attacks: {val_missed}, False Alarms: {val_false_alarms}")
 
-        if val_f1 > best_lstm_val_f1:
-            best_lstm_val_f1 = val_f1
+        if val_f2 > best_lstm_val_f2:
+            best_lstm_val_f2 = val_f2
             lstm_patience_counter = 0
             torch.save(lstm_model.state_dict(), "best_lstm_model.pt")
-            print(f" -> Saved best LSTM model (F1: {best_lstm_val_f1:.4f})")
-        elif val_f1 < best_lstm_val_f1:
+            print(f" -> Saved best LSTM model (F2: {best_lstm_val_f2:.4f}, Recall: {val_recall:.4f}, Precision: {val_precision:.4f})")
+        elif val_f2 <= best_lstm_val_f2:
             lstm_patience_counter += 1
-            print(f" -> Patience {lstm_patience_counter}/{patience} (Val F1 < Best Val F1)")
+            print(f" -> Patience {lstm_patience_counter}/{patience} (Val F2 <= Best Val F2)")
             if lstm_patience_counter >= patience:
                 print("LSTM Early stopping triggered")
                 break
@@ -623,11 +636,11 @@ def main():
     except (FileNotFoundError, RuntimeError) as e:
         print(f"Could not load best LSTM model ({e}), using last checkpoint.")
     print("transformer threshold:")
-    best_thr = find_best_threshold(model, valid_loader, target="f1")
+    best_thr = find_best_threshold(model, valid_loader, target="f2")
     transformer_test_metrics = evaluate_metrics(model, test_loader, loss_fn, threshold=best_thr)
 
     print("lstm threshold:")
-    best_lstm_thr = find_best_threshold(lstm_model, valid_loader, target="f1")
+    best_lstm_thr = find_best_threshold(lstm_model, valid_loader, target="f2")
     lstm_test_metrics = evaluate_metrics(lstm_model, test_loader, lstm_loss_fn, threshold=best_lstm_thr)
 
     print("Transformer Test Metrics:")
