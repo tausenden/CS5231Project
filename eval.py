@@ -4,6 +4,7 @@ from sklearn.model_selection import train_test_split
 from training import (
     load_df, build_vocab, SeqDataset, collate_fn,
     TransformerClassifier, LSTMClassifier, evaluate_metrics,
+    find_best_threshold,
     CSV_PATH, MAX_LEN, BATCH_SIZE, SEED,
     D_MODEL, NHEAD, NUM_LAYERS, FFN_DIM, DROPOUT,
     device
@@ -17,8 +18,11 @@ def main():
     
     # Recreate splits to get the exact same test set
     _, temp_df = train_test_split(df, test_size=0.2, stratify=df["y"], random_state=SEED)
-    _, test_df = train_test_split(temp_df, test_size=0.5, stratify=temp_df["y"], random_state=SEED)
+    valid_df, test_df = train_test_split(temp_df, test_size=0.5, stratify=temp_df["y"], random_state=SEED)
     
+    valid_dataset = SeqDataset(valid_df, token2id, MAX_LEN)
+    valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
+
     test_dataset = SeqDataset(test_df, token2id, MAX_LEN)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
     
@@ -26,7 +30,7 @@ def main():
     
     from torch import nn
     loss_fn = nn.BCEWithLogitsLoss() 
-    output_dir = "output\\ver1\\"
+    output_dir = "output\\ver2\\"
     T_model_name = output_dir + "best_transformer_model.pt"
     L_model_name = output_dir + "best_lstm_model.pt"
 
@@ -37,7 +41,9 @@ def main():
     model = TransformerClassifier(vocab_size, D_MODEL, NHEAD, NUM_LAYERS, FFN_DIM, DROPOUT, MAX_LEN, pad_id).to(device)
     try:
         model.load_state_dict(torch.load(T_model_name, map_location=device, weights_only=True))
-        metrics = evaluate_metrics(model, test_loader, loss_fn)
+        print("Finding best threshold for Transformer...")
+        best_thr = find_best_threshold(model, valid_loader, target="f1")
+        metrics = evaluate_metrics(model, test_loader, loss_fn, threshold=best_thr)
         for k, v in metrics.items():
             print(f" - {k}: {v}")
     except Exception as e:
@@ -50,7 +56,9 @@ def main():
     lstm_model = LSTMClassifier(vocab_size, D_MODEL, D_MODEL, 3, DROPOUT, pad_id).to(device)
     try:
         lstm_model.load_state_dict(torch.load(L_model_name, map_location=device, weights_only=True))
-        metrics = evaluate_metrics(lstm_model, test_loader, loss_fn)
+        print("Finding best threshold for LSTM...")
+        best_lstm_thr = find_best_threshold(lstm_model, valid_loader, target="f1")
+        metrics = evaluate_metrics(lstm_model, test_loader, loss_fn, threshold=best_lstm_thr)
         for k, v in metrics.items():
             print(f" - {k}: {v}")
     except Exception as e:

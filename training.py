@@ -2,6 +2,11 @@ import random
 from collections import Counter
 
 import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from transformers import get_cosine_schedule_with_warmup
+from sklearn.metrics import precision_recall_fscore_support
+import time
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
@@ -120,7 +125,7 @@ def evaluate(model, data_loader, loss_fn):
     acc = total_correct / max(1, total_samples)
     return avg_loss, acc
 
-def evaluate_metrics(model, data_loader, loss_fn):
+def evaluate_metrics(model, data_loader, loss_fn, threshold=0.5):
     model.eval()
     total_loss = 0.0
     y_true = []
@@ -138,10 +143,10 @@ def evaluate_metrics(model, data_loader, loss_fn):
             total_loss += loss.item() * labels.size(0)
             y_true.extend(labels.long().tolist())
             y_prob.extend(probs.detach().cpu().tolist())
-    import numpy as np
     y_true = np.array(y_true)
     y_prob = np.array(y_prob)
-    y_pred = (y_prob > 0.5).astype(int)
+    y_pred = (y_prob > threshold).astype(int)
+
     avg_loss = total_loss / max(1, len(y_true))
     acc = (y_pred == y_true).mean() if len(y_true) > 0 else 0.0
     precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary", zero_division=0)
@@ -167,6 +172,41 @@ def evaluate_metrics(model, data_loader, loss_fn):
         "missed_attacks": int(fn),
         "false_alarms": int(fp)
     }
+
+def collect_probs(model, data_loader):
+    """Return y_true and y_prob for a given loader."""
+    model.eval()
+    y_true, y_prob = [], []
+    with torch.no_grad():
+        for input_ids, attention_mask, labels in data_loader:
+            input_ids = input_ids.to(device)
+            attention_mask = attention_mask.to(device)
+            labels = labels.to(device)
+
+            logits = model(input_ids, attention_mask)
+            probs = torch.sigmoid(logits)
+
+            y_true.extend(labels.long().tolist())
+            y_prob.extend(probs.detach().cpu().tolist())
+
+    return np.array(y_true), np.array(y_prob)
+
+def find_best_threshold(model, valid_loader, target="recall"):
+    y_true, y_prob = collect_probs(model, valid_loader)
+    best_thr, best_score = 0.5, -1.0
+
+
+    for thr in np.linspace(0.0, 1.0, 100):
+        y_pred = (y_prob > thr).astype(int)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_true, y_pred, average="binary", zero_division=0
+        )
+        score = {"precision": precision, "recall": recall, "f1": f1}[target]
+        if score > best_score:
+            best_score, best_thr = score, thr
+
+    print(f"Best {target}: {best_score:.4f} at threshold={best_thr:.3f}")
+    return best_thr
 
 def predict_sequence(model, seq_str, token2id, pad_id, max_len, device):
     tokens = str(seq_str).split()
@@ -284,10 +324,6 @@ class LSTMClassifier(nn.Module):
         # logits = self.fc(h_n[-1]).squeeze(-1)
         return logits
 
-from sklearn.model_selection import train_test_split
-from transformers import get_cosine_schedule_with_warmup
-import time
-
 def main():
     print(device)
 
@@ -378,7 +414,7 @@ def main():
 
 
     best_val_f1 = 0.0
-    patience = 3
+    patience = 5
     patience_counter = 0
 
     for epoch in range(1, EPOCHS + 1):
@@ -541,9 +577,13 @@ def main():
         print("Loaded best LSTM model from best_lstm_model.pt")
     except (FileNotFoundError, RuntimeError) as e:
         print(f"Could not load best LSTM model ({e}), using last checkpoint.")
+    print("transformer threshold:")
+    best_thr = find_best_threshold(model, valid_loader, target="f1")
+    transformer_test_metrics = evaluate_metrics(model, test_loader, loss_fn, threshold=best_thr)
 
-    transformer_test_metrics = evaluate_metrics(model, test_loader, loss_fn)
-    lstm_test_metrics = evaluate_metrics(lstm_model, test_loader, lstm_loss_fn)
+    print("lstm threshold:")
+    best_lstm_thr = find_best_threshold(lstm_model, valid_loader, target="f1")
+    lstm_test_metrics = evaluate_metrics(lstm_model, test_loader, lstm_loss_fn, threshold=best_lstm_thr)
 
     print("Transformer Test Metrics:")
     for k, v in transformer_test_metrics.items():
@@ -556,20 +596,20 @@ def main():
     example_seq_normal = df[df["label"] == "normal"].iloc[0]["sequence"]
     example_seq_attack = df[df["label"] == "attack"].iloc[0]["sequence"]
 
-    def get_label(prob):
-        return 'attack' if prob > 0.5 else 'normal'
+    def get_label(prob, thr):
+        return 'attack' if prob > thr else 'normal'
 
-    print("\nTransformer inference (normal, attack):")
+    print(f"\nTransformer inference (threshold={best_thr:.3f}):")
     p_normal = predict_sequence(model, example_seq_normal, token2id, pad_id, MAX_LEN, device)
     p_attack = predict_sequence(model, example_seq_attack, token2id, pad_id, MAX_LEN, device)
-    print(f"Normal sample -> Prob: {p_normal:.4f}, Prediction: {get_label(p_normal)}")
-    print(f"Attack sample -> Prob: {p_attack:.4f}, Prediction: {get_label(p_attack)}")
+    print(f"Normal sample -> Prob: {p_normal:.4f}, Prediction: {get_label(p_normal, best_thr)}")
+    print(f"Attack sample -> Prob: {p_attack:.4f}, Prediction: {get_label(p_attack, best_thr)}")
 
-    print("\nLSTM inference (normal, attack):")
+    print(f"\nLSTM inference (threshold={best_lstm_thr:.3f}):")
     p_normal_lstm = predict_sequence(lstm_model, example_seq_normal, token2id, pad_id, MAX_LEN, device)
     p_attack_lstm = predict_sequence(lstm_model, example_seq_attack, token2id, pad_id, MAX_LEN, device)
-    print(f"Normal sample -> Prob: {p_normal_lstm:.4f}, Prediction: {get_label(p_normal_lstm)}")
-    print(f"Attack sample -> Prob: {p_attack_lstm:.4f}, Prediction: {get_label(p_attack_lstm)}")
+    print(f"Normal sample -> Prob: {p_normal_lstm:.4f}, Prediction: {get_label(p_normal_lstm, best_lstm_thr)}")
+    print(f"Attack sample -> Prob: {p_attack_lstm:.4f}, Prediction: {get_label(p_attack_lstm, best_lstm_thr)}")
 
 if __name__ == "__main__":
     main()
