@@ -11,10 +11,10 @@ from sklearn.metrics import precision_recall_fscore_support, roc_auc_score, conf
 CSV_PATH = "./cleaned_sample_parsed_cadets_tagged_chunked.csv"
 MAX_LEN = 256
 BATCH_SIZE = 256
-D_MODEL = 64
+D_MODEL = 128
 NHEAD = 4
-NUM_LAYERS = 3
-FFN_DIM = 128
+NUM_LAYERS = 4
+FFN_DIM = 256
 DROPOUT = 0.2
 
 LR = 5e-4

@@ -23,20 +23,12 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
     
     print(f"Test Set Size: {len(test_dataset)}")
-
-    # Loss function (needed for evaluate_metrics)
-    # Note: evaluate_metrics calculates loss but for pure eval we care more about other metrics
-    # We need to pass a loss function that matches the signature.
-    # Since we don't have the weighted loss tensor here easily without recalculating,
-    # we can use a standard BCE loss for reporting purposes or recalculate weights.
-    # For consistency, let's recalculate weights briefly or just use standard BCE.
-    # Given we just want to see metrics, standard BCE is fine for the loss reporting,
-    # but to be exact we should use the same weights.
-    # Let's grab weights logic from training.py or just assume standard for eval reporting.
-    # Actually, evaluate_metrics in training.py expects loss_fn.
     
     from torch import nn
     loss_fn = nn.BCEWithLogitsLoss() 
+    output_dir = "output\\ver1\\"
+    T_model_name = output_dir + "best_transformer_model.pt"
+    L_model_name = output_dir + "best_lstm_model.pt"
 
     # Evaluate Transformer
     print(f"\n{'='*60}")
@@ -44,12 +36,12 @@ def main():
     print(f"{'='*60}")
     model = TransformerClassifier(vocab_size, D_MODEL, NHEAD, NUM_LAYERS, FFN_DIM, DROPOUT, MAX_LEN, pad_id).to(device)
     try:
-        model.load_state_dict(torch.load("best_transformer_model.pt", map_location=device, weights_only=True))
+        model.load_state_dict(torch.load(T_model_name, map_location=device, weights_only=True))
         metrics = evaluate_metrics(model, test_loader, loss_fn)
         for k, v in metrics.items():
             print(f" - {k}: {v}")
     except Exception as e:
-        print(f"Error loading Transformer model: {e}")
+        print(f"Error loading Transformer model from {T_model_name}: {e}")
 
     # Evaluate LSTM
     print(f"\n{'='*60}")
@@ -57,12 +49,12 @@ def main():
     print(f"{'='*60}")
     lstm_model = LSTMClassifier(vocab_size, D_MODEL, D_MODEL, 3, DROPOUT, pad_id).to(device)
     try:
-        lstm_model.load_state_dict(torch.load("best_lstm_model.pt", map_location=device, weights_only=True))
+        lstm_model.load_state_dict(torch.load(L_model_name, map_location=device, weights_only=True))
         metrics = evaluate_metrics(lstm_model, test_loader, loss_fn)
         for k, v in metrics.items():
             print(f" - {k}: {v}")
     except Exception as e:
-        print(f"Error loading LSTM model: {e}")
+        print(f"Error loading LSTM model from {L_model_name}: {e}")
 
 if __name__ == "__main__":
     main()
