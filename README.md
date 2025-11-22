@@ -52,14 +52,44 @@ LSTM Test Metrics:
  - missed_attacks: 144.0000
  - false_alarms: 8.0000
 
-Transformer inference (threshold=0.750):
-
-Normal sample -> Prob: 0.3902, Prediction: normal
-
+Transformer inference (threshold=0.750):\
+Normal sample -> Prob: 0.3902, Prediction: normal\
 Attack sample -> Prob: 0.3970, Prediction: normal
 
-LSTM inference (threshold=0.950):
-
-Normal sample -> Prob: 0.4217, Prediction: normal
-
+LSTM inference (threshold=0.950):\
+Normal sample -> Prob: 0.4217, Prediction: normal\
 Attack sample -> Prob: 0.4183, Prediction: normal
+
+## ver3
+transformer threshold:\
+Best f1: 0.4460 at threshold=0.859\
+lstm threshold:\
+Best f1: 0.4429 at threshold=0.859
+
+Transformer Test Metrics:
+ - loss: 1.3511
+ - acc: 0.9780
+ - precision: 0.9054
+ - recall: 0.3175
+ - f1: 0.4702
+ - auc: 0.6755
+ - missed_attacks: 144.0000
+ - false_alarms: 7.0000
+
+LSTM Test Metrics:
+ - loss: 1.3659
+ - acc: 0.9779
+ - precision: 0.8933
+ - recall: 0.3175
+ - f1: 0.4685
+ - auc: 0.6948
+ - missed_attacks: 144.0000
+ - false_alarms: 8.0000
+
+Transformer inference (threshold=0.859):\
+Normal sample -> Prob: 0.4382, Prediction: normal\
+Attack sample -> Prob: 0.4459, Prediction: normal
+
+LSTM inference (threshold=0.859):\
+Normal sample -> Prob: 0.4702, Prediction: normal\
+Attack sample -> Prob: 0.4711, Prediction: normal

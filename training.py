@@ -353,7 +353,9 @@ def main():
     test_counts = test_df["y"].value_counts().to_dict()
     num_pos = float(train_counts.get(1, 0))
     num_neg = float(train_counts.get(0, 0))
-    POS_WEIGHT = num_neg / max(1.0, num_pos)
+
+    # Multiply by 2.0 to penalize missed attacks more heavily and improve recall
+    POS_WEIGHT = (num_neg / max(1.0, num_pos)) * 1.5
 
     train_dataset = SeqDataset(train_df, token2id, MAX_LEN)
     valid_dataset = SeqDataset(valid_df, token2id, MAX_LEN)
