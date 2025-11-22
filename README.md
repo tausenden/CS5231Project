@@ -132,10 +132,11 @@ Attack sample -> Prob: 0.4800, Prediction: normal
 
 ## ver5
 ### using f2 score
-transformer threshold:
-Best f2: 1.0000 at threshold=0.394
-lstm threshold:
+transformer threshold:\
+Best f2: 1.0000 at threshold=0.394\
+lstm threshold:\
 Best f2: 1.0000 at threshold=0.586
+
 Transformer Test Metrics:
  - loss: 0.0003
  - acc: 0.9990
@@ -158,10 +159,10 @@ LSTM Test Metrics:
  - missed_attacks: 0.0000
  - false_alarms: 3.0000
 
-Transformer inference (threshold=0.394):
-Normal sample -> Prob: 0.0292, Prediction: normal
+Transformer inference (threshold=0.394):\
+Normal sample -> Prob: 0.0292, Prediction: normal\
 Attack sample -> Prob: 0.9555, Prediction: attack
 
-LSTM inference (threshold=0.586):
-Normal sample -> Prob: 0.0529, Prediction: normal
+LSTM inference (threshold=0.586):\
+Normal sample -> Prob: 0.0529, Prediction: normal\
 Attack sample -> Prob: 0.9598, Prediction: attack
