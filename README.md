@@ -93,3 +93,39 @@ Attack sample -> Prob: 0.4459, Prediction: normal
 LSTM inference (threshold=0.859):\
 Normal sample -> Prob: 0.4702, Prediction: normal\
 Attack sample -> Prob: 0.4711, Prediction: normal
+
+## ver4
+### using focal loss
+
+transformer threshold:\
+Best f1: 0.4491 at threshold=0.798\
+lstm threshold:\
+Best f1: 0.4429 at threshold=0.838
+
+Transformer Test Metrics:
+ - loss: 0.4819
+ - acc: 0.9774
+ - precision: 0.8590
+ - recall: 0.3175
+ - f1: 0.4637
+ - auc: 0.6880
+ - missed_attacks: 144.0000
+ - false_alarms: 11.0000
+
+LSTM Test Metrics:
+ - loss: 0.4786
+ - acc: 0.9777
+ - precision: 0.8816
+ - recall: 0.3175
+ - f1: 0.4669
+ - auc: 0.7012
+ - missed_attacks: 144.0000
+ - false_alarms: 9.0000
+
+Transformer inference (threshold=0.798):\
+Normal sample -> Prob: 0.4578, Prediction: normal\
+Attack sample -> Prob: 0.4706, Prediction: normal
+
+LSTM inference (threshold=0.838):\
+Normal sample -> Prob: 0.4838, Prediction: normal\
+Attack sample -> Prob: 0.4800, Prediction: normal

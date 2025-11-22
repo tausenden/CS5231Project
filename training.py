@@ -8,6 +8,7 @@ from transformers import get_cosine_schedule_with_warmup
 from sklearn.metrics import precision_recall_fscore_support
 import time
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
@@ -324,6 +325,40 @@ class LSTMClassifier(nn.Module):
         # logits = self.fc(h_n[-1]).squeeze(-1)
         return logits
 
+class FocalBCELoss(nn.Module):
+    """
+    Focal loss built on top of BCEWithLogitsLoss.
+    - logits: raw outputs of the model, shape (B,)
+    - targets: float tensor of 0/1, shape (B,)
+    """
+    def __init__(self, alpha=0.75, gamma=2.0, pos_weight=None):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.register_buffer("pos_weight", pos_weight if pos_weight is not None else None)
+
+    def forward(self, logits, targets):
+        targets = targets.float()
+        # base BCEWithLogits (per-sample)
+        bce = F.binary_cross_entropy_with_logits(
+            logits,
+            targets,
+            pos_weight=self.pos_weight,
+            reduction="none",
+        )
+        # p = sigmoid(logits)
+        probs = torch.sigmoid(logits)
+        # p_t = p if y=1 else 1-p
+        p_t = probs * targets + (1.0 - probs) * (1.0 - targets)
+        # focal factor (1 - p_t)^gamma
+        focal_factor = (1.0 - p_t).pow(self.gamma)
+        # alpha-balance: alpha for pos, (1-alpha) for neg
+        if self.alpha is not None:
+            alpha_t = self.alpha * targets + (1.0 - self.alpha) * (1.0 - targets)
+            focal_factor = focal_factor * alpha_t
+        loss = focal_factor * bce
+        return loss.mean()
+
 def main():
     print(device)
 
@@ -398,7 +433,11 @@ def main():
     ).to(device)
 
     pos_weight_tensor = torch.tensor([POS_WEIGHT]).to(device)
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+    loss_fn = FocalBCELoss(
+        alpha=None,
+        gamma=1.5,
+        pos_weight=pos_weight_tensor,
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
     total_epochs = EPOCHS
@@ -501,7 +540,11 @@ def main():
         pad_id=pad_id,
     ).to(device)
 
-    lstm_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+    lstm_loss_fn = FocalBCELoss(
+        alpha=None,         
+        gamma=1.5,
+        pos_weight=pos_weight_tensor,
+    )
     lstm_optimizer = torch.optim.Adam(lstm_model.parameters(), lr=LR)
 
     best_lstm_val_f1 = 0.0
